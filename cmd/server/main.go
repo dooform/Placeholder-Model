@@ -1,23 +1,18 @@
 package main
 
 import (
-	"fmt"
 	"log"
+
+	"DF-PLCH/internal/handlers"
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
-	fmt.Println("Docx Editor by Placeholder Method - Prototype")
-	fmt.Println("===========================================")
+	r := gin.Default()
 
-	inputFile := "../../example.docx"
-	outputFile := "../../output_modified.docx"
+	r.GET("/placeholders", handlers.GetPlaceholders)
+	r.POST("/process", handlers.ProcessDocument)
 
-	processor := NewDocxProcessor(inputFile, outputFile)
-
-	if err := processor.Process(); err != nil {
-		log.Fatalf("Error processing docx file: %v", err)
-	}
-
-	fmt.Println("\nDocx processing completed successfully!")
-	fmt.Printf("Output file: %s\n", outputFile)
+	log.Println("Starting server on :8080")
+	r.Run(":8080")
 }

@@ -1,4 +1,4 @@
-package main
+package processor
 
 import (
 	"archive/zip"
@@ -82,7 +82,6 @@ func (dp *DocxProcessor) FindAndReplaceInDocument(placeholders map[string]string
 
 	contentStr := string(content)
 
-	// Handle XML tag splitting by removing tags, replacing, then reconstructing
 	for placeholder, value := range placeholders {
 		contentStr = dp.replaceWithXMLHandling(contentStr, placeholder, value)
 	}
@@ -96,13 +95,10 @@ func (dp *DocxProcessor) FindAndReplaceInDocument(placeholders map[string]string
 }
 
 func (dp *DocxProcessor) replaceWithXMLHandling(content, placeholder, value string) string {
-	// First try simple replacement
 	if strings.Contains(content, placeholder) {
 		return strings.ReplaceAll(content, placeholder, value)
 	}
 
-	// If simple replacement doesn't work, handle XML splitting
-	// Find the placeholder pattern even when split across XML tags
 	placeholderChars := []rune(placeholder)
 	result := ""
 	i := 0
@@ -111,12 +107,10 @@ func (dp *DocxProcessor) replaceWithXMLHandling(content, placeholder, value stri
 		char := rune(content[pos])
 
 		if i < len(placeholderChars) && char == placeholderChars[i] {
-			// Potential match, look ahead
 			match, endPos := dp.checkPlaceholderMatch(content, pos, placeholder)
 			if match {
-				// Replace the entire matched section with the value
 				result += value
-				pos = endPos - 1 // -1 because loop will increment
+				pos = endPos - 1
 				i = 0
 				continue
 			}
@@ -217,11 +211,8 @@ func (dp *DocxProcessor) ExtractPlaceholders() ([]string, error) {
 	}
 
 	contentStr := string(content)
-
-	// Remove XML tags to get clean text, then find placeholders
 	cleanText := dp.removeXMLTags(contentStr)
 
-	// Find all {{...}} patterns in clean text
 	var placeholders []string
 	start := 0
 	for {
@@ -239,7 +230,6 @@ func (dp *DocxProcessor) ExtractPlaceholders() ([]string, error) {
 
 		placeholder := cleanText[startIndex:endIndex]
 
-		// Check if we already have this placeholder
 		found := false
 		for _, existing := range placeholders {
 			if existing == placeholder {
@@ -301,14 +291,11 @@ func (dp *DocxProcessor) AutoFillPlaceholders(placeholders []string) map[string]
 		case strings.Contains(placeholder, "signName"):
 			value = "Dhanavadh Saito"
 		case strings.Contains(placeholder, "c_"):
-			// Extract number from {{c_X}} and use it as digit
-			value = "5" // Default citizen ID digit
+			value = "5"
 		case strings.Contains(placeholder, "m_id_"):
-			// Extract number from {{m_id_X}} and use it as digit
-			value = "7" // Default motorbike ID digit
+			value = "7"
 		case strings.Contains(placeholder, "w_id_"):
-			// Extract number from {{w_id_X}} and use it as digit
-			value = "3" // Default work ID digit
+			value = "3"
 		default:
 			value = "TEST"
 		}
