@@ -33,6 +33,10 @@ func NewPDFService(gotenbergURL string) (*PDFService, error) {
 }
 
 func (s *PDFService) ConvertDocxToPDF(ctx context.Context, docxReader io.Reader, filename string) (io.ReadCloser, error) {
+	return s.ConvertDocxToPDFWithOrientation(ctx, docxReader, filename, false)
+}
+
+func (s *PDFService) ConvertDocxToPDFWithOrientation(ctx context.Context, docxReader io.Reader, filename string, landscape bool) (io.ReadCloser, error) {
 	// Create document from reader
 	doc, err := document.FromReader(filename, docxReader)
 	if err != nil {
@@ -42,8 +46,11 @@ func (s *PDFService) ConvertDocxToPDF(ctx context.Context, docxReader io.Reader,
 	// Create LibreOffice request for DOCX conversion
 	req := gotenberg.NewLibreOfficeRequest(doc)
 
-	// Set landscape mode to false (portrait)
-	req.Landscape()
+	// Set orientation based on parameter
+	if landscape {
+		req.Landscape()
+	}
+	// If landscape is false, default to portrait (don't call Landscape())
 
 	// Convert document
 	resp, err := s.client.Send(ctx, req)
@@ -63,6 +70,8 @@ func (s *PDFService) ConvertDocxToPDFFromFile(ctx context.Context, docxFilePath 
 
 	// Create LibreOffice request for DOCX conversion
 	req := gotenberg.NewLibreOfficeRequest(doc)
+
+	// Default to portrait orientation
 
 	// Convert document
 	resp, err := s.client.Send(ctx, req)

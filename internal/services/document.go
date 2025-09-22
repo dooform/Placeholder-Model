@@ -110,8 +110,16 @@ func (s *DocumentService) ProcessDocument(ctx context.Context, templateID string
 		if err == nil {
 			defer docxFile.Close()
 
-			// Convert DOCX to PDF
-			pdfReader, err := s.pdfService.ConvertDocxToPDF(ctx, docxFile, template.Filename)
+			// Detect orientation from the processed DOCX
+			landscape := false
+			if orientation, err := proc.DetectOrientation(); err == nil {
+				landscape = orientation
+			} else {
+				fmt.Printf("Warning: failed to detect orientation: %v\n", err)
+			}
+
+			// Convert DOCX to PDF with correct orientation
+			pdfReader, err := s.pdfService.ConvertDocxToPDFWithOrientation(ctx, docxFile, template.Filename, landscape)
 			if err != nil {
 				fmt.Printf("Warning: failed to convert DOCX to PDF: %v\n", err)
 			} else {

@@ -34,6 +34,7 @@ type DocumentLayout struct {
 	TopMargin    float64 // Top margin in points
 	BottomMargin float64 // Bottom margin in points
 	LineHeight   float64 // Default line height in points
+	Landscape    bool    // True if page is in landscape orientation
 }
 
 type ParagraphInfo struct {
@@ -259,6 +260,20 @@ func (dp *DocxProcessor) ExtractPlaceholders() ([]string, error) {
 	return placeholders, nil
 }
 
+func (dp *DocxProcessor) DetectOrientation() (bool, error) {
+	// Read document.xml content
+	contentPath := filepath.Join(dp.tempDir, "word", "document.xml")
+	contentBytes, err := os.ReadFile(contentPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to read document.xml: %w", err)
+	}
+
+	contentStr := string(contentBytes)
+	layout := dp.parseDocumentLayout(contentStr)
+
+	return layout.Landscape, nil
+}
+
 func (dp *DocxProcessor) ExtractPlaceholdersWithPositions() ([]PlaceholderPosition, error) {
 	documentPath := filepath.Join(dp.tempDir, "word", "document.xml")
 
@@ -452,7 +467,31 @@ func (dp *DocxProcessor) parseDocumentLayout(content string) DocumentLayout {
 					}
 				}
 			}
+
+			// Check for explicit orientation setting (w:orient attribute in w:pgSz)
+			if pgSzStart := strings.Index(sectContent, "<w:pgSz"); pgSzStart != -1 {
+				pgSzEnd := strings.Index(sectContent[pgSzStart:], "/>")
+				if pgSzEnd != -1 {
+					pgSzTag := sectContent[pgSzStart : pgSzStart+pgSzEnd]
+
+					// Check for w:orient attribute
+					if orientStart := strings.Index(pgSzTag, `w:orient="`); orientStart != -1 {
+						orientStart += 10
+						orientEnd := strings.Index(pgSzTag[orientStart:], `"`)
+						if orientEnd != -1 {
+							orientation := pgSzTag[orientStart : orientStart+orientEnd]
+							layout.Landscape = orientation == "landscape"
+						}
+					}
+				}
+			}
 		}
+	}
+
+	// If no explicit orientation was found, determine by width vs height ratio
+	if layout.PageWidth > 0 && layout.PageHeight > 0 && !layout.Landscape {
+		// Only override if not already set to landscape
+		layout.Landscape = layout.PageWidth > layout.PageHeight
 	}
 
 	return layout
