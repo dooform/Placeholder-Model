@@ -1,16 +1,29 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
+	"time"
 
-	"DF-PLCH/internal/processor"
+	"DF-PLCH/internal/services"
+
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
+
+type DocxHandler struct {
+	templateService *services.TemplateService
+	documentService *services.DocumentService
+}
+
+func NewDocxHandler(templateService *services.TemplateService, documentService *services.DocumentService) *DocxHandler {
+	return &DocxHandler{
+		templateService: templateService,
+		documentService: documentService,
+	}
+}
 
 type PlaceholderResponse struct {
 	Placeholders []string `json:"placeholders"`
@@ -27,11 +40,13 @@ type UploadResponse struct {
 }
 
 type ProcessResponse struct {
-	DocumentID string `json:"document_id"`
-	Message    string `json:"message"`
+	DocumentID   string `json:"document_id"`
+	DownloadURL  string `json:"download_url"`
+	ExpiresAt    string `json:"expires_at"`
+	Message      string `json:"message"`
 }
 
-func UploadTemplate(c *gin.Context) {
+func (h *DocxHandler) UploadTemplate(c *gin.Context) {
 	file, header, err := c.Request.FormFile("template")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
@@ -44,42 +59,22 @@ func UploadTemplate(c *gin.Context) {
 		return
 	}
 
-	if err := os.MkdirAll("uploads", 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
-		return
-	}
 
-	templateID := uuid.New().String()
-	filePath := filepath.Join("uploads", templateID+".docx")
-
-	out, err := os.Create(filePath)
+	template, err := h.templateService.UploadTemplate(c.Request.Context(), file, header)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
-		return
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, file)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to upload template: %v", err)})
 		return
 	}
 
-	proc := processor.NewDocxProcessor(filePath, "")
-	if err := proc.UnzipDocx(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process document"})
-		return
-	}
-	defer proc.Cleanup()
-
-	placeholders, err := proc.ExtractPlaceholders()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract placeholders"})
+	// Parse placeholders from JSON
+	var placeholders []string
+	if err := json.Unmarshal([]byte(template.Placeholders), &placeholders); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse placeholders"})
 		return
 	}
 
 	response := UploadResponse{
-		TemplateID:   templateID,
+		TemplateID:   template.ID,
 		Placeholders: placeholders,
 		Message:      "Template uploaded successfully",
 	}
@@ -87,29 +82,17 @@ func UploadTemplate(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-func GetPlaceholders(c *gin.Context) {
+func (h *DocxHandler) GetPlaceholders(c *gin.Context) {
 	templateID := c.Param("templateId")
 	if templateID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Template ID is required"})
 		return
 	}
 
-	filePath := filepath.Join("uploads", templateID+".docx")
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Template not found"})
-		return
-	}
 
-	proc := processor.NewDocxProcessor(filePath, "")
-	if err := proc.UnzipDocx(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process document"})
-		return
-	}
-	defer proc.Cleanup()
-
-	placeholders, err := proc.ExtractPlaceholders()
+	placeholders, err := h.templateService.GetPlaceholders(templateID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract placeholders"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Template not found"})
 		return
 	}
 
@@ -120,7 +103,7 @@ func GetPlaceholders(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-func ProcessDocument(c *gin.Context) {
+func (h *DocxHandler) ProcessDocument(c *gin.Context) {
 	templateID := c.Param("templateId")
 	if templateID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Template ID is required"})
@@ -133,77 +116,76 @@ func ProcessDocument(c *gin.Context) {
 		return
 	}
 
-	inputFile := filepath.Join("uploads", templateID+".docx")
-	if _, err := os.Stat(inputFile); os.IsNotExist(err) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Template not found"})
-		return
-	}
 
-	if err := os.MkdirAll("outputs", 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create output directory"})
-		return
-	}
-
-	documentID := uuid.New().String()
-	outputFile := filepath.Join("outputs", documentID+".docx")
-	proc := processor.NewDocxProcessor(inputFile, outputFile)
-
-	if err := proc.UnzipDocx(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unzip document"})
-		return
-	}
-	defer proc.Cleanup()
-
-	placeholders, err := proc.ExtractPlaceholders()
+	document, err := h.documentService.ProcessDocument(c.Request.Context(), templateID, req.Data)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract placeholders"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to process document: %v", err)})
 		return
 	}
 
-	completeData := make(map[string]string)
-	for _, placeholder := range placeholders {
-		if value, exists := req.Data[placeholder]; exists {
-			completeData[placeholder] = value
-		} else {
-			completeData[placeholder] = ""
-		}
-	}
-
-	if err := proc.FindAndReplaceInDocument(completeData); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to replace placeholders"})
-		return
-	}
-
-	if err := proc.ReZipDocx(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create output document"})
-		return
-	}
-
+	// Create temporary download link that expires in 24 hours
+	expiresAt := time.Now().Add(24 * time.Hour)
 	response := ProcessResponse{
-		DocumentID: documentID,
-		Message:    "Document processed successfully",
+		DocumentID:  document.ID,
+		DownloadURL: fmt.Sprintf("/api/v1/documents/%s/download", document.ID),
+		ExpiresAt:   expiresAt.Format(time.RFC3339),
+		Message:     "Document processed successfully",
 	}
 
 	c.JSON(http.StatusOK, response)
 }
 
-func DownloadDocument(c *gin.Context) {
+func (h *DocxHandler) DownloadDocument(c *gin.Context) {
 	documentID := c.Param("documentId")
 	if documentID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Document ID is required"})
 		return
 	}
 
-	filePath := filepath.Join("outputs", documentID+".docx")
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+
+	reader, filename, err := h.documentService.GetDocumentReader(c.Request.Context(), documentID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Document not found"})
 		return
 	}
+	defer reader.Close()
 
 	c.Header("Content-Description", "File Transfer")
 	c.Header("Content-Transfer-Encoding", "binary")
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s.docx", documentID))
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
-	c.File(filePath)
+	// Stream the file to the client
+	_, err = io.Copy(c.Writer, reader)
+	if err != nil {
+		// If streaming fails, don't delete the file
+		fmt.Printf("Error streaming file: %v\n", err)
+		return
+	}
+
+	// After successful download, delete the processed DOCX file from GCS
+	// but keep the document record in database with user data
+	go func() {
+		if err := h.documentService.DeleteProcessedFile(c.Request.Context(), documentID); err != nil {
+			fmt.Printf("Warning: failed to delete processed file for document %s: %v\n", documentID, err)
+		}
+	}()
+}
+
+
+// Legacy functions for backward compatibility - these will be removed
+func UploadTemplate(c *gin.Context) {
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "This endpoint is deprecated. Use dependency injection instead."})
+}
+
+func GetPlaceholders(c *gin.Context) {
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "This endpoint is deprecated. Use dependency injection instead."})
+}
+
+func ProcessDocument(c *gin.Context) {
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "This endpoint is deprecated. Use dependency injection instead."})
+}
+
+func DownloadDocument(c *gin.Context) {
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "This endpoint is deprecated. Use dependency injection instead."})
 }

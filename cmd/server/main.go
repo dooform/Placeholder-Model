@@ -1,45 +1,150 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"time"
 
+	"DF-PLCH/internal"
+	"DF-PLCH/internal/config"
 	"DF-PLCH/internal/handlers"
+	"DF-PLCH/internal/services"
+	"DF-PLCH/internal/storage"
+
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	// Set Gin mode based on environment
+	if cfg.Server.Environment == "production" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// Initialize database
+	if err := internal.InitDB(cfg); err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+
+	// Initialize GCS client
+	ctx := context.Background()
+	gcsClient, err := storage.NewGCSClient(ctx, cfg.GCS.BucketName, cfg.GCS.ProjectID, cfg.GCS.CredentialsPath)
+	if err != nil {
+		log.Fatalf("Failed to initialize GCS client: %v", err)
+	}
+	defer gcsClient.Close()
+
+	// Initialize services
+	templateService := services.NewTemplateService(gcsClient)
+	documentService := services.NewDocumentService(gcsClient, templateService)
+	activityLogService := services.NewActivityLogService()
+
+	// Initialize handlers
+	docxHandler := handlers.NewDocxHandler(templateService, documentService)
+	logsHandler := handlers.NewLogsHandler(activityLogService)
+
+	// Initialize Gin router
 	r := gin.Default()
 
-	// Initialize file cleanup service (files older than 24 hours will be deleted)
-	cleanupService := handlers.NewFileCleanupService("uploads", "outputs", 24*time.Hour)
-	cleanupService.Start()
+	// Activity logging middleware (add before other middlewares)
+	r.Use(activityLogService.LoggingMiddleware())
 
-	// Graceful shutdown handling
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-c
-		log.Println("Shutting down server...")
-		cleanupService.Stop()
-		os.Exit(0)
-	}()
+	// CORS middleware
+	r.Use(func(c *gin.Context) {
+		origin := c.Request.Header.Get("Origin")
+		if slices.Contains(cfg.Server.AllowOrigins, origin) {
+			c.Header("Access-Control-Allow-Origin", origin)
+		}
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		c.Header("Access-Control-Allow-Credentials", "true")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusOK)
+			return
+		}
+
+		c.Next()
+	})
+
+	// Health check endpoint
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "healthy",
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+			"version": "2.0.0-cloud",
+		})
+	})
 
 	// API v1 routes
 	v1 := r.Group("/api/v1")
 	{
-		// File upload and template management
-		v1.POST("/upload", handlers.UploadTemplate)
-		v1.GET("/templates/:templateId/placeholders", handlers.GetPlaceholders)
+		// Template management
+		v1.POST("/upload", docxHandler.UploadTemplate)
+		v1.GET("/templates/:templateId/placeholders", docxHandler.GetPlaceholders)
 
 		// Document processing and download
-		v1.POST("/templates/:templateId/process", handlers.ProcessDocument)
-		v1.GET("/documents/:documentId/download", handlers.DownloadDocument)
+		v1.POST("/templates/:templateId/process", docxHandler.ProcessDocument)
+		v1.GET("/documents/:documentId/download", docxHandler.DownloadDocument)
+
+		// Activity logs
+		v1.GET("/logs", logsHandler.GetAllLogs)
+		v1.GET("/logs/stats", logsHandler.GetLogStats)
+		v1.GET("/logs/process", logsHandler.GetProcessLogs)
+		v1.GET("/logs/debug", logsHandler.GetAllLogsDebug)
+
+		// Simple history endpoint
+		v1.GET("/history", logsHandler.GetHistory)
 	}
 
-	log.Println("Starting server on :8080")
-	r.Run(":8080")
+	// Create HTTP server
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%s", cfg.Server.Port),
+		Handler: r,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Start server in a goroutine
+	go func() {
+		log.Printf("Starting server on port %s (environment: %s)", cfg.Server.Port, cfg.Server.Environment)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to start server: %v", err)
+		}
+	}()
+
+	// Graceful shutdown handling
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("Shutting down server...")
+
+	// Give outstanding requests a deadline for completion
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Shutdown server
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("Server forced to shutdown: %v", err)
+	}
+
+	// Close database connection
+	if err := internal.CloseDB(); err != nil {
+		log.Printf("Error closing database: %v", err)
+	}
+
+	log.Println("Server exited")
 }

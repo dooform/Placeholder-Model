@@ -3,3 +3,5 @@
 output_modified.docx
 *.md
 server
+.env
+key.json
