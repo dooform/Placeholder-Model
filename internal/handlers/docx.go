@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
 	"DF-PLCH/internal/processor"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type PlaceholderResponse struct {
@@ -49,7 +49,7 @@ func UploadTemplate(c *gin.Context) {
 		return
 	}
 
-	templateID := fmt.Sprintf("template_%d", time.Now().UnixNano())
+	templateID := uuid.New().String()
 	filePath := filepath.Join("uploads", templateID+".docx")
 
 	out, err := os.Create(filePath)
@@ -144,7 +144,7 @@ func ProcessDocument(c *gin.Context) {
 		return
 	}
 
-	documentID := fmt.Sprintf("doc_%d", time.Now().UnixNano())
+	documentID := uuid.New().String()
 	outputFile := filepath.Join("outputs", documentID+".docx")
 	proc := processor.NewDocxProcessor(inputFile, outputFile)
 
