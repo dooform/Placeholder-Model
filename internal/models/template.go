@@ -11,6 +11,8 @@ type Template struct {
 	Filename     string         `gorm:"not null" json:"filename"`
 	OriginalName string         `json:"original_name"`
 	DisplayName  string         `json:"display_name"`
+	Description  string         `json:"description"`
+	Author       string         `json:"author"`
 	GCSPath      string         `gorm:"not null" json:"gcs_path"`
 	FileSize     int64          `json:"file_size"`
 	MimeType     string         `json:"mime_type"`

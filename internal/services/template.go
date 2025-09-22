@@ -27,6 +27,10 @@ func NewTemplateService(gcsClient *storage.GCSClient) *TemplateService {
 }
 
 func (s *TemplateService) UploadTemplate(ctx context.Context, file multipart.File, header *multipart.FileHeader) (*models.Template, error) {
+	return s.UploadTemplateWithMetadata(ctx, file, header, header.Filename, "", "")
+}
+
+func (s *TemplateService) UploadTemplateWithMetadata(ctx context.Context, file multipart.File, header *multipart.FileHeader, fileName, description, author string) (*models.Template, error) {
 	templateID := uuid.New().String()
 	objectName := storage.GenerateObjectName(templateID, header.Filename)
 
@@ -86,6 +90,9 @@ func (s *TemplateService) UploadTemplate(ctx context.Context, file multipart.Fil
 		ID:           templateID,
 		Filename:     header.Filename,
 		OriginalName: header.Filename,
+		DisplayName:  fileName,
+		Description:  description,
+		Author:       author,
 		GCSPath:      objectName,
 		FileSize:     result.Size,
 		MimeType:     header.Header.Get("Content-Type"),
@@ -107,6 +114,14 @@ func (s *TemplateService) GetTemplate(templateID string) (*models.Template, erro
 		return nil, fmt.Errorf("template not found: %w", err)
 	}
 	return &template, nil
+}
+
+func (s *TemplateService) GetAllTemplates() ([]models.Template, error) {
+	var templates []models.Template
+	if err := internal.DB.Find(&templates).Error; err != nil {
+		return nil, fmt.Errorf("failed to get templates: %w", err)
+	}
+	return templates, nil
 }
 
 func (s *TemplateService) GetPlaceholders(templateID string) ([]string, error) {

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"DF-PLCH/internal/models"
 	"DF-PLCH/internal/processor"
 	"DF-PLCH/internal/services"
 
@@ -34,12 +35,19 @@ type PlaceholderPositionResponse struct {
 	Placeholders []processor.PlaceholderPosition `json:"placeholders"`
 }
 
+type TemplatesResponse struct {
+	Templates []models.Template `json:"templates"`
+}
+
 type ProcessRequest struct {
 	Data map[string]string `json:"data"`
 }
 
 type UploadResponse struct {
 	TemplateID   string   `json:"template_id"`
+	FileName     string   `json:"file_name"`
+	Description  string   `json:"description"`
+	Author       string   `json:"author"`
 	Placeholders []string `json:"placeholders"`
 	Message      string   `json:"message"`
 }
@@ -64,7 +72,25 @@ func (h *DocxHandler) UploadTemplate(c *gin.Context) {
 		return
 	}
 
-	template, err := h.templateService.UploadTemplate(c.Request.Context(), file, header)
+	// Get required fields from form
+	fileName := c.PostForm("fileName")
+	description := c.PostForm("description")
+	author := c.PostForm("author")
+
+	if fileName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "fileName is required"})
+		return
+	}
+	if description == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "description is required"})
+		return
+	}
+	if author == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "author is required"})
+		return
+	}
+
+	template, err := h.templateService.UploadTemplateWithMetadata(c.Request.Context(), file, header, fileName, description, author)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to upload template: %v", err)})
 		return
@@ -79,8 +105,25 @@ func (h *DocxHandler) UploadTemplate(c *gin.Context) {
 
 	response := UploadResponse{
 		TemplateID:   template.ID,
+		FileName:     template.DisplayName,
+		Description:  template.Description,
+		Author:       template.Author,
 		Placeholders: placeholders,
 		Message:      "Template uploaded successfully",
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *DocxHandler) GetAllTemplates(c *gin.Context) {
+	templates, err := h.templateService.GetAllTemplates()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get templates: %v", err)})
+		return
+	}
+
+	response := TemplatesResponse{
+		Templates: templates,
 	}
 
 	c.JSON(http.StatusOK, response)

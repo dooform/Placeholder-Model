@@ -92,6 +92,7 @@ func main() {
 	{
 		// Template management
 		v1.POST("/upload", docxHandler.UploadTemplate)
+		v1.GET("/templates", docxHandler.GetAllTemplates)
 		v1.GET("/templates/:templateId/placeholders", docxHandler.GetPlaceholders)
 		v1.GET("/templates/:templateId/positions", docxHandler.GetPlaceholderPositions)
 
