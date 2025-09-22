@@ -17,6 +17,7 @@ import (
 	"DF-PLCH/internal/services"
 	"DF-PLCH/internal/storage"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -69,29 +70,54 @@ func main() {
 	r.Use(activityLogService.LoggingMiddleware())
 
 	// CORS middleware
-	r.Use(func(c *gin.Context) {
-		origin := c.Request.Header.Get("Origin")
-		if slices.Contains(cfg.Server.AllowOrigins, origin) {
-			c.Header("Access-Control-Allow-Origin", origin)
-		}
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		c.Header("Access-Control-Allow-Credentials", "true")
+	corsConfig := cors.DefaultConfig()
 
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(http.StatusOK)
-			return
+	// Handle wildcard configuration
+	if slices.Contains(cfg.Server.AllowOrigins, "*") {
+		corsConfig.AllowAllOrigins = true
+	} else {
+		// Prepare allowed origins with development localhost support
+		allowedOrigins := make([]string, 0, len(cfg.Server.AllowOrigins))
+
+		// Add configured origins
+		for _, origin := range cfg.Server.AllowOrigins {
+			if origin != "" {
+				allowedOrigins = append(allowedOrigins, origin)
+			}
 		}
 
-		c.Next()
-	})
+		// Add localhost origins in development mode
+		if cfg.Server.Environment == "development" {
+			localhostOrigins := []string{
+				"http://localhost:3001",
+				"http://localhost:3001",
+				"http://localhost:5173",
+				"http://localhost:8080",
+			}
+
+			// Only add localhost origins that aren't already in the list
+			for _, localhost := range localhostOrigins {
+				if !slices.Contains(allowedOrigins, localhost) {
+					allowedOrigins = append(allowedOrigins, localhost)
+				}
+			}
+		}
+
+		corsConfig.AllowOrigins = allowedOrigins
+	}
+
+	corsConfig.AllowCredentials = true
+	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	corsConfig.AllowHeaders = []string{"Content-Type", "Authorization"}
+
+	r.Use(cors.New(corsConfig))
 
 	// Health check endpoint
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"status": "healthy",
+			"status":    "healthy",
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
-			"version": "2.0.0-cloud",
+			"version":   "2.0.0-cloud",
 		})
 	})
 
@@ -120,8 +146,8 @@ func main() {
 
 	// Create HTTP server
 	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%s", cfg.Server.Port),
-		Handler: r,
+		Addr:         fmt.Sprintf(":%s", cfg.Server.Port),
+		Handler:      r,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,

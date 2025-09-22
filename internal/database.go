@@ -49,7 +49,7 @@ func autoMigrate() error {
             display_name longtext,
             description longtext,
             author longtext,
-            gcs_path longtext NOT NULL,
+            gcs_path_docx longtext,
             file_size bigint,
             mime_type longtext,
             placeholders json,
@@ -64,13 +64,36 @@ func autoMigrate() error {
 		return fmt.Errorf("failed to create document_templates table: %w", result.Error)
 	}
 
+	// Handle legacy gcs_path migration for document_templates table
+	var gcsPathExists bool
+	err := DB.Raw("SELECT count(*) FROM INFORMATION_SCHEMA.columns WHERE table_schema = DATABASE() AND table_name = 'document_templates' AND column_name = 'gcs_path'").Scan(&gcsPathExists).Error
+	if err == nil && gcsPathExists {
+		fmt.Println("Migrating legacy gcs_path column in document_templates...")
+
+		// First ensure gcs_path_docx column exists
+		if err := DB.Exec("ALTER TABLE document_templates ADD COLUMN gcs_path_docx longtext").Error; err != nil {
+			// Column might already exist, that's OK
+		}
+
+		// Migrate data from gcs_path to gcs_path_docx
+		if err := DB.Exec(`UPDATE document_templates SET gcs_path_docx = gcs_path WHERE gcs_path_docx IS NULL AND gcs_path IS NOT NULL`).Error; err != nil {
+			return fmt.Errorf("failed to migrate gcs_path to gcs_path_docx in templates: %w", err)
+		}
+
+		// Drop the legacy column
+		fmt.Println("Dropping legacy gcs_path column from document_templates...")
+		if err := DB.Exec(`ALTER TABLE document_templates DROP COLUMN gcs_path`).Error; err != nil {
+			fmt.Printf("Warning: failed to drop gcs_path column from templates: %v\n", err)
+		}
+	}
+
 	ensureDocumentTemplateColumns := map[string]string{
 		"filename":      "ALTER TABLE document_templates ADD COLUMN filename longtext",
 		"original_name": "ALTER TABLE document_templates ADD COLUMN original_name longtext",
 		"display_name":  "ALTER TABLE document_templates ADD COLUMN display_name longtext",
 		"description":   "ALTER TABLE document_templates ADD COLUMN description longtext",
 		"author":        "ALTER TABLE document_templates ADD COLUMN author longtext",
-		"gcs_path":      "ALTER TABLE document_templates ADD COLUMN gcs_path longtext",
+		"gcs_path_docx": "ALTER TABLE document_templates ADD COLUMN gcs_path_docx longtext",
 		"file_size":     "ALTER TABLE document_templates ADD COLUMN file_size bigint",
 		"mime_type":     "ALTER TABLE document_templates ADD COLUMN mime_type longtext",
 		"placeholders":  "ALTER TABLE document_templates ADD COLUMN placeholders json",

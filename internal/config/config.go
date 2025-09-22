@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -57,13 +58,10 @@ func Load() (*Config, error) {
 
 	config := &Config{
 		Server: ServerConfig{
-			Port:        getEnv("SERVER_PORT", "8080"),
-			Environment: getEnv("ENVIRONMENT", "development"),
-			BaseURL:     getEnv("BASE_URL", ""),
-			AllowOrigins: []string{
-				getEnv("FRONTEND_URL_1", "http://localhost:3000"),
-				getEnv("FRONTEND_URL_2", "http://localhost:3001"),
-			},
+			Port:         getEnv("SERVER_PORT", "8080"),
+			Environment:  getEnv("ENVIRONMENT", "development"),
+			BaseURL:      getEnv("BASE_URL", ""),
+			AllowOrigins: parseAllowOrigins(),
 		},
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
@@ -90,4 +88,39 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func parseAllowOrigins() []string {
+	// First try to get from ALLOW_ORIGINS (comma-separated)
+	if origins := os.Getenv("ALLOW_ORIGINS"); origins != "" {
+		// Split by comma and trim whitespace
+		var allowOrigins []string
+		for _, origin := range strings.Split(origins, ",") {
+			if trimmed := strings.TrimSpace(origin); trimmed != "" {
+				allowOrigins = append(allowOrigins, trimmed)
+			}
+		}
+		return allowOrigins
+	}
+
+	// Fallback to individual FRONTEND_URL_* variables for backward compatibility
+	var allowOrigins []string
+
+	if url1 := getEnv("FRONTEND_URL_1", ""); url1 != "" {
+		allowOrigins = append(allowOrigins, url1)
+	}
+
+	if url2 := getEnv("FRONTEND_URL_2", ""); url2 != "" {
+		allowOrigins = append(allowOrigins, url2)
+	}
+
+	// Default origins if none specified
+	if len(allowOrigins) == 0 {
+		allowOrigins = []string{
+			"http://localhost:3000",
+			"http://localhost:3001",
+		}
+	}
+
+	return allowOrigins
 }
