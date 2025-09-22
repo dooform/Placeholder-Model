@@ -108,14 +108,14 @@ func (s *DocumentService) ProcessDocument(ctx context.Context, templateID string
 
 	// Save document metadata
 	document := &models.Document{
-		ID:         documentID,
-		TemplateID: templateID,
-		Filename:   template.Filename,
-		GCSPath:    objectName,
-		FileSize:   result.Size,
-		MimeType:   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-		Data:       string(dataJSON),
-		Status:     "completed",
+		ID:          documentID,
+		TemplateID:  templateID,
+		Filename:    template.Filename,
+		GCSPathDocx: objectName,
+		FileSize:    result.Size,
+		MimeType:    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		Data:        string(dataJSON),
+		Status:      "completed",
 	}
 
 	if err := internal.DB.Create(document).Error; err != nil {
@@ -134,18 +134,36 @@ func (s *DocumentService) GetDocument(documentID string) (*models.Document, erro
 	return &document, nil
 }
 
-func (s *DocumentService) GetDocumentReader(ctx context.Context, documentID string) (io.ReadCloser, string, error) {
+func (s *DocumentService) GetDocumentReader(ctx context.Context, documentID string, format string) (io.ReadCloser, string, string, error) {
 	document, err := s.GetDocument(documentID)
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 
-	reader, err := s.gcsClient.ReadFile(ctx, document.GCSPath)
+	var gcsPath, filename, mimeType string
+
+	switch format {
+	case "pdf":
+		if document.GCSPathPdf == "" {
+			return nil, "", "", fmt.Errorf("PDF version not available")
+		}
+		gcsPath = document.GCSPathPdf
+		filename = document.Filename[:len(document.Filename)-5] + ".pdf" // Remove .docx and add .pdf
+		mimeType = "application/pdf"
+	case "docx":
+		fallthrough
+	default:
+		gcsPath = document.GCSPathDocx
+		filename = document.Filename
+		mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	}
+
+	reader, err := s.gcsClient.ReadFile(ctx, gcsPath)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to read document from GCS: %w", err)
+		return nil, "", "", fmt.Errorf("failed to read document from GCS: %w", err)
 	}
 
-	return reader, document.Filename, nil
+	return reader, filename, mimeType, nil
 }
 
 func (s *DocumentService) DeleteDocument(ctx context.Context, documentID string) error {
@@ -155,25 +173,43 @@ func (s *DocumentService) DeleteDocument(ctx context.Context, documentID string)
 	}
 
 	// Delete from GCS
-	if err := s.gcsClient.DeleteFile(ctx, document.GCSPath); err != nil {
+	if err := s.gcsClient.DeleteFile(ctx, document.GCSPathDocx); err != nil {
 		// Log error but continue with database deletion
-		fmt.Printf("Warning: failed to delete GCS file %s: %v\n", document.GCSPath, err)
+		fmt.Printf("Warning: failed to delete GCS DOCX file %s: %v\n", document.GCSPathDocx, err)
+	}
+	if document.GCSPathPdf != "" {
+		if err := s.gcsClient.DeleteFile(ctx, document.GCSPathPdf); err != nil {
+			// Log error but continue with database deletion
+			fmt.Printf("Warning: failed to delete GCS PDF file %s: %v\n", document.GCSPathPdf, err)
+		}
 	}
 
 	// Soft delete from database
 	return internal.DB.Delete(document).Error
 }
 
-// DeleteProcessedFile deletes only the processed DOCX file from GCS
+// DeleteProcessedFile deletes only the specified format file from GCS
 // but keeps the document record with user data in the database
-func (s *DocumentService) DeleteProcessedFile(ctx context.Context, documentID string) error {
+func (s *DocumentService) DeleteProcessedFile(ctx context.Context, documentID string, format string) error {
 	document, err := s.GetDocument(documentID)
 	if err != nil {
 		return err
 	}
 
-	// Delete only the GCS file, keep database record
-	if err := s.gcsClient.DeleteFile(ctx, document.GCSPath); err != nil {
+	var gcsPath string
+	switch format {
+	case "pdf":
+		gcsPath = document.GCSPathPdf
+	default:
+		gcsPath = document.GCSPathDocx
+	}
+
+	if gcsPath == "" {
+		return fmt.Errorf("file path not found for format %s", format)
+	}
+
+	// Delete only the specified GCS file, keep database record
+	if err := s.gcsClient.DeleteFile(ctx, gcsPath); err != nil {
 		return fmt.Errorf("failed to delete processed file from GCS: %w", err)
 	}
 
@@ -204,3 +240,4 @@ func (s *DocumentService) createTempFile(reader io.Reader) (string, error) {
 func (s *DocumentService) cleanupTempFile(filePath string) {
 	os.Remove(filePath)
 }
+

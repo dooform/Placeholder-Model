@@ -40,10 +40,10 @@ type UploadResponse struct {
 }
 
 type ProcessResponse struct {
-	DocumentID   string `json:"document_id"`
-	DownloadURL  string `json:"download_url"`
-	ExpiresAt    string `json:"expires_at"`
-	Message      string `json:"message"`
+	DocumentID  string `json:"document_id"`
+	DownloadURL string `json:"download_url"`
+	ExpiresAt   string `json:"expires_at"`
+	Message     string `json:"message"`
 }
 
 func (h *DocxHandler) UploadTemplate(c *gin.Context) {
@@ -58,7 +58,6 @@ func (h *DocxHandler) UploadTemplate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Only .docx files are supported"})
 		return
 	}
-
 
 	template, err := h.templateService.UploadTemplate(c.Request.Context(), file, header)
 	if err != nil {
@@ -89,7 +88,6 @@ func (h *DocxHandler) GetPlaceholders(c *gin.Context) {
 		return
 	}
 
-
 	placeholders, err := h.templateService.GetPlaceholders(templateID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Template not found"})
@@ -116,7 +114,6 @@ func (h *DocxHandler) ProcessDocument(c *gin.Context) {
 		return
 	}
 
-
 	document, err := h.documentService.ProcessDocument(c.Request.Context(), templateID, req.Data)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to process document: %v", err)})
@@ -142,8 +139,9 @@ func (h *DocxHandler) DownloadDocument(c *gin.Context) {
 		return
 	}
 
+	format := c.DefaultQuery("format", "docx")
 
-	reader, filename, err := h.documentService.GetDocumentReader(c.Request.Context(), documentID)
+	reader, filename, mimeType, err := h.documentService.GetDocumentReader(c.Request.Context(), documentID, format)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Document not found"})
 		return
@@ -153,7 +151,7 @@ func (h *DocxHandler) DownloadDocument(c *gin.Context) {
 	c.Header("Content-Description", "File Transfer")
 	c.Header("Content-Transfer-Encoding", "binary")
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	c.Header("Content-Type", mimeType)
 
 	// Stream the file to the client
 	_, err = io.Copy(c.Writer, reader)
@@ -166,12 +164,11 @@ func (h *DocxHandler) DownloadDocument(c *gin.Context) {
 	// After successful download, delete the processed DOCX file from GCS
 	// but keep the document record in database with user data
 	go func() {
-		if err := h.documentService.DeleteProcessedFile(c.Request.Context(), documentID); err != nil {
+		if err := h.documentService.DeleteProcessedFile(c.Request.Context(), documentID, format); err != nil {
 			fmt.Printf("Warning: failed to delete processed file for document %s: %v\n", documentID, err)
 		}
 	}()
 }
-
 
 // Legacy functions for backward compatibility - these will be removed
 func UploadTemplate(c *gin.Context) {
