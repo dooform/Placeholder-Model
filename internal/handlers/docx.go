@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"DF-PLCH/internal/processor"
 	"DF-PLCH/internal/services"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +28,10 @@ func NewDocxHandler(templateService *services.TemplateService, documentService *
 
 type PlaceholderResponse struct {
 	Placeholders []string `json:"placeholders"`
+}
+
+type PlaceholderPositionResponse struct {
+	Placeholders []processor.PlaceholderPosition `json:"placeholders"`
 }
 
 type ProcessRequest struct {
@@ -96,6 +101,26 @@ func (h *DocxHandler) GetPlaceholders(c *gin.Context) {
 
 	response := PlaceholderResponse{
 		Placeholders: placeholders,
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *DocxHandler) GetPlaceholderPositions(c *gin.Context) {
+	templateID := c.Param("templateId")
+	if templateID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Template ID is required"})
+		return
+	}
+
+	positions, err := h.templateService.GetPlaceholderPositions(templateID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Template not found"})
+		return
+	}
+
+	response := PlaceholderPositionResponse{
+		Placeholders: positions,
 	}
 
 	c.JSON(http.StatusOK, response)

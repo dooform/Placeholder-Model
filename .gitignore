@@ -5,3 +5,5 @@ output_modified.docx
 server
 .env
 key.json
+README.md
+/temp_analysis
