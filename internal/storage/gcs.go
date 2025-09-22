@@ -99,3 +99,9 @@ func GenerateDocumentObjectName(documentID, filename string) string {
 	timestamp := time.Now().Unix()
 	return fmt.Sprintf("documents/%s/%d_%s", documentID, timestamp, filename)
 }
+
+func GenerateDocumentPDFObjectName(documentID, filename string) string {
+	timestamp := time.Now().Unix()
+	pdfFilename := filename[:len(filename)-5] + ".pdf" // Replace .docx with .pdf
+	return fmt.Sprintf("documents/%s/%d_%s", documentID, timestamp, pdfFilename)
+}

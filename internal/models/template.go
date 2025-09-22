@@ -33,7 +33,7 @@ type Document struct {
 	ID          string         `gorm:"primaryKey" json:"id"`
 	TemplateID  string         `gorm:"not null;index" json:"template_id"`
 	Filename    string         `gorm:"not null" json:"filename"`
-	GCSPathDocx string         `gorm:"not null" json:"gcs_path_docx"`
+	GCSPathDocx string         `json:"gcs_path_docx"`
 	GCSPathPdf  string         `json:"gcs_path_pdf,omitempty"`
 	FileSize    int64          `json:"file_size"`
 	MimeType    string         `json:"mime_type"`

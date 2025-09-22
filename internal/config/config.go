@@ -8,9 +8,10 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig   `json:"server"`
-	Database DatabaseConfig `json:"database"`
-	GCS      GCSConfig      `json:"gcs"`
+	Server     ServerConfig     `json:"server"`
+	Database   DatabaseConfig   `json:"database"`
+	GCS        GCSConfig        `json:"gcs"`
+	Gotenberg  GotenbergConfig  `json:"gotenberg"`
 }
 
 type ServerConfig struct {
@@ -32,6 +33,10 @@ type GCSConfig struct {
 	BucketName      string `json:"bucket_name"`
 	ProjectID       string `json:"project_id"`
 	CredentialsPath string `json:"credentials_path"`
+}
+
+type GotenbergConfig struct {
+	URL string `json:"url"`
 }
 
 func (d *DatabaseConfig) DSN() string {
@@ -71,6 +76,9 @@ func Load() (*Config, error) {
 			BucketName:      getEnv("GCS_BUCKET_NAME", ""),
 			ProjectID:       getEnv("GOOGLE_CLOUD_PROJECT", ""),
 			CredentialsPath: getEnv("GCS_CREDENTIALS_PATH", ""),
+		},
+		Gotenberg: GotenbergConfig{
+			URL: getEnv("GOTENBERG_URL", "http://localhost:3000"),
 		},
 	}
 

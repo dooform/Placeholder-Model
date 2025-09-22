@@ -19,12 +19,14 @@ import (
 type DocumentService struct {
 	gcsClient       *storage.GCSClient
 	templateService *TemplateService
+	pdfService      *PDFService
 }
 
-func NewDocumentService(gcsClient *storage.GCSClient, templateService *TemplateService) *DocumentService {
+func NewDocumentService(gcsClient *storage.GCSClient, templateService *TemplateService, pdfService *PDFService) *DocumentService {
 	return &DocumentService{
 		gcsClient:       gcsClient,
 		templateService: templateService,
+		pdfService:      pdfService,
 	}
 }
 
@@ -85,7 +87,7 @@ func (s *DocumentService) ProcessDocument(ctx context.Context, templateID string
 		return nil, fmt.Errorf("failed to create output document: %w", err)
 	}
 
-	// Upload processed document to GCS
+	// Upload processed DOCX document to GCS
 	outputFile, err := os.Open(tempOutputFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open output file: %w", err)
@@ -99,10 +101,43 @@ func (s *DocumentService) ProcessDocument(ctx context.Context, templateID string
 		return nil, fmt.Errorf("failed to upload processed document to GCS: %w", err)
 	}
 
+	// Generate PDF using Gotenberg (optional - don't fail if PDF generation fails)
+	var pdfObjectName string
+	var pdfGCSPath string
+	if s.pdfService != nil {
+		// Re-open the DOCX file for PDF conversion
+		docxFile, err := os.Open(tempOutputFile)
+		if err == nil {
+			defer docxFile.Close()
+
+			// Convert DOCX to PDF
+			pdfReader, err := s.pdfService.ConvertDocxToPDF(ctx, docxFile, template.Filename)
+			if err != nil {
+				fmt.Printf("Warning: failed to convert DOCX to PDF: %v\n", err)
+			} else {
+				defer pdfReader.Close()
+
+				// Upload PDF to GCS
+				pdfObjectName = storage.GenerateDocumentPDFObjectName(documentID, template.Filename)
+				_, err = s.gcsClient.UploadFile(ctx, pdfReader, pdfObjectName, "application/pdf")
+				if err != nil {
+					fmt.Printf("Warning: failed to upload PDF to GCS: %v\n", err)
+					// Don't set pdfObjectName if upload failed
+					pdfObjectName = ""
+				} else {
+					pdfGCSPath = pdfObjectName
+				}
+			}
+		}
+	}
+
 	// Convert data to JSON
 	dataJSON, err := json.Marshal(completeData)
 	if err != nil {
 		s.gcsClient.DeleteFile(ctx, objectName)
+		if pdfObjectName != "" {
+			s.gcsClient.DeleteFile(ctx, pdfObjectName)
+		}
 		return nil, fmt.Errorf("failed to marshal data: %w", err)
 	}
 
@@ -112,6 +147,7 @@ func (s *DocumentService) ProcessDocument(ctx context.Context, templateID string
 		TemplateID:  templateID,
 		Filename:    template.Filename,
 		GCSPathDocx: objectName,
+		GCSPathPdf:  pdfGCSPath,
 		FileSize:    result.Size,
 		MimeType:    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 		Data:        string(dataJSON),
@@ -120,6 +156,9 @@ func (s *DocumentService) ProcessDocument(ctx context.Context, templateID string
 
 	if err := internal.DB.Create(document).Error; err != nil {
 		s.gcsClient.DeleteFile(ctx, objectName)
+		if pdfObjectName != "" {
+			s.gcsClient.DeleteFile(ctx, pdfObjectName)
+		}
 		return nil, fmt.Errorf("failed to save document metadata: %w", err)
 	}
 

@@ -53,10 +53,11 @@ type UploadResponse struct {
 }
 
 type ProcessResponse struct {
-	DocumentID  string `json:"document_id"`
-	DownloadURL string `json:"download_url"`
-	ExpiresAt   string `json:"expires_at"`
-	Message     string `json:"message"`
+	DocumentID     string `json:"document_id"`
+	DownloadURL    string `json:"download_url"`
+	DownloadPDFURL string `json:"download_pdf_url,omitempty"`
+	ExpiresAt      string `json:"expires_at"`
+	Message        string `json:"message"`
 }
 
 func (h *DocxHandler) UploadTemplate(c *gin.Context) {
@@ -195,6 +196,11 @@ func (h *DocxHandler) ProcessDocument(c *gin.Context) {
 		DownloadURL: fmt.Sprintf("/api/v1/documents/%s/download", document.ID),
 		ExpiresAt:   expiresAt.Format(time.RFC3339),
 		Message:     "Document processed successfully",
+	}
+
+	// Add PDF download URL if PDF was generated
+	if document.GCSPathPdf != "" {
+		response.DownloadPDFURL = fmt.Sprintf("/api/v1/documents/%s/download?format=pdf", document.ID)
 	}
 
 	c.JSON(http.StatusOK, response)

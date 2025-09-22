@@ -92,7 +92,7 @@ func autoMigrate() error {
             id varchar(191) PRIMARY KEY,
             template_id varchar(191) NOT NULL,
             filename longtext NOT NULL,
-            gcs_path_docx longtext NOT NULL,
+            gcs_path_docx longtext,
             gcs_path_pdf longtext,
             file_size bigint,
             mime_type longtext,
@@ -107,6 +107,29 @@ func autoMigrate() error {
     `)
 	if result.Error != nil {
 		return fmt.Errorf("failed to create documents table: %w", result.Error)
+	}
+
+	// Handle legacy gcs_path column first
+	if DB.Migrator().HasColumn("documents", "gcs_path") {
+		fmt.Println("Found legacy gcs_path column, migrating...")
+
+		// First ensure gcs_path_docx exists
+		if !DB.Migrator().HasColumn("documents", "gcs_path_docx") {
+			if err := DB.Exec("ALTER TABLE documents ADD COLUMN gcs_path_docx longtext").Error; err != nil {
+				return fmt.Errorf("failed to add gcs_path_docx column: %w", err)
+			}
+		}
+
+		// Migrate data from gcs_path to gcs_path_docx
+		if err := DB.Exec(`UPDATE documents SET gcs_path_docx = gcs_path WHERE gcs_path_docx IS NULL AND gcs_path IS NOT NULL`).Error; err != nil {
+			return fmt.Errorf("failed to migrate gcs_path to gcs_path_docx: %w", err)
+		}
+
+		// Drop the legacy column
+		fmt.Println("Dropping legacy gcs_path column...")
+		if err := DB.Exec(`ALTER TABLE documents DROP COLUMN gcs_path`).Error; err != nil {
+			fmt.Printf("Warning: failed to drop gcs_path column: %v\n", err)
+		}
 	}
 
 	ensureDocumentsColumns := map[string]string{
@@ -125,13 +148,6 @@ func autoMigrate() error {
 	for column, stmt := range ensureDocumentsColumns {
 		if err := ensureColumn("documents", column, stmt); err != nil {
 			return err
-		}
-	}
-
-	if DB.Migrator().HasColumn("documents", "gcs_path") {
-		fmt.Println("Migrating documents.gcs_path to gcs_path_docx...")
-		if err := DB.Exec(`UPDATE documents SET gcs_path_docx = gcs_path WHERE (gcs_path_docx IS NULL OR gcs_path_docx = '') AND gcs_path IS NOT NULL`).Error; err != nil {
-			return fmt.Errorf("failed to migrate gcs_path to gcs_path_docx: %w", err)
 		}
 	}
 

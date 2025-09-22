@@ -47,7 +47,15 @@ func main() {
 
 	// Initialize services
 	templateService := services.NewTemplateService(gcsClient)
-	documentService := services.NewDocumentService(gcsClient, templateService)
+
+	// Initialize PDF service
+	pdfService, err := services.NewPDFService(cfg.Gotenberg.URL)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize PDF service: %v", err)
+		pdfService = nil // Continue without PDF service
+	}
+
+	documentService := services.NewDocumentService(gcsClient, templateService, pdfService)
 	activityLogService := services.NewActivityLogService()
 
 	// Initialize handlers
@@ -146,6 +154,13 @@ func main() {
 	// Close database connection
 	if err := internal.CloseDB(); err != nil {
 		log.Printf("Error closing database: %v", err)
+	}
+
+	// Close PDF service
+	if pdfService != nil {
+		if err := pdfService.Close(); err != nil {
+			log.Printf("Error closing PDF service: %v", err)
+		}
 	}
 
 	log.Println("Server exited")
