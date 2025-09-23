@@ -64,24 +64,32 @@ func NewDocxProcessor(inputFile, outputFile string) *DocxProcessor {
 }
 
 func (dp *DocxProcessor) UnzipDocx() error {
+	fmt.Printf("[DEBUG] Starting DOCX unzip for file: %s\n", dp.inputFile)
 	reader, err := zip.OpenReader(dp.inputFile)
 	if err != nil {
 		return fmt.Errorf("failed to open docx file: %w", err)
 	}
 	defer reader.Close()
+	fmt.Printf("[DEBUG] DOCX file opened successfully\n")
 
+	fmt.Printf("[DEBUG] Creating temp directory: %s\n", dp.tempDir)
 	err = os.MkdirAll(dp.tempDir, 0755)
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
+	fmt.Printf("[DEBUG] Temp directory created successfully\n")
 
-	for _, file := range reader.File {
+	fmt.Printf("[DEBUG] Found %d files in DOCX archive\n", len(reader.File))
+	for i, file := range reader.File {
+		fmt.Printf("[DEBUG] Extracting file %d/%d: %s\n", i+1, len(reader.File), file.Name)
 		err := dp.extractFile(file)
 		if err != nil {
 			return fmt.Errorf("failed to extract file %s: %w", file.Name, err)
 		}
+		fmt.Printf("[DEBUG] Successfully extracted: %s\n", file.Name)
 	}
 
+	fmt.Printf("[DEBUG] DOCX unzip completed successfully\n")
 	return nil
 }
 
@@ -113,53 +121,124 @@ func (dp *DocxProcessor) extractFile(file *zip.File) error {
 
 func (dp *DocxProcessor) FindAndReplaceInDocument(placeholders map[string]string) error {
 	documentPath := filepath.Join(dp.tempDir, "word", "document.xml")
+	fmt.Printf("[DEBUG] Reading document.xml for replacement from: %s\n", documentPath)
 
 	content, err := os.ReadFile(documentPath)
 	if err != nil {
 		return fmt.Errorf("failed to read document.xml: %w", err)
 	}
+	fmt.Printf("[DEBUG] Document.xml read for replacement, size: %d bytes\n", len(content))
 
 	contentStr := string(content)
+	fmt.Printf("[DEBUG] Starting replacement for %d placeholders\n", len(placeholders))
 
+	i := 0
 	for placeholder, value := range placeholders {
+		i++
+		fmt.Printf("[DEBUG] Replacing placeholder %d/%d: %s -> '%s'\n", i, len(placeholders), placeholder, value)
 		contentStr = dp.replaceWithXMLHandling(contentStr, placeholder, value)
+		fmt.Printf("[DEBUG] Replacement %d/%d completed\n", i, len(placeholders))
 	}
 
+	fmt.Printf("[DEBUG] All replacements completed, writing back to file...\n")
 	err = os.WriteFile(documentPath, []byte(contentStr), 0644)
 	if err != nil {
 		return fmt.Errorf("failed to write document.xml: %w", err)
 	}
+	fmt.Printf("[DEBUG] Document.xml written successfully\n")
 
 	return nil
 }
 
 func (dp *DocxProcessor) replaceWithXMLHandling(content, placeholder, value string) string {
+	fmt.Printf("[DEBUG] Starting XML-aware replacement for placeholder: %s\n", placeholder)
+
+	// First try simple replacement if placeholder exists as-is
 	if strings.Contains(content, placeholder) {
+		fmt.Printf("[DEBUG] Found exact match, using simple replacement\n")
 		return strings.ReplaceAll(content, placeholder, value)
 	}
 
-	placeholderChars := []rune(placeholder)
-	result := ""
-	i := 0
+	fmt.Printf("[DEBUG] No exact match found, using XML-aware replacement\n")
 
-	for pos := 0; pos < len(content); pos++ {
-		char := rune(content[pos])
+	// Use a more robust approach to handle XML-split placeholders
+	// This approach is safer and won't hang
+	result := dp.replaceXMLSafeSlow(content, placeholder, value)
 
-		if i < len(placeholderChars) && char == placeholderChars[i] {
-			match, endPos := dp.checkPlaceholderMatch(content, pos, placeholder)
-			if match {
-				result += value
-				pos = endPos - 1
-				i = 0
-				continue
-			}
-		}
+	fmt.Printf("[DEBUG] XML-aware replacement completed\n")
+	return result
+}
 
-		result += string(char)
-		i = 0
+// More robust but slower XML-aware replacement that won't hang
+func (dp *DocxProcessor) replaceXMLSafeSlow(content, placeholder, value string) string {
+	// Convert to runes to handle Unicode properly
+	contentRunes := []rune(content)
+	placeholderRunes := []rune(placeholder)
+
+	if len(placeholderRunes) == 0 {
+		return content
 	}
 
-	return result
+	result := make([]rune, 0, len(contentRunes))
+	i := 0
+
+	for i < len(contentRunes) {
+		// Try to match placeholder starting at position i
+		match, matchEnd := dp.checkXMLSafeMatch(contentRunes, i, placeholderRunes)
+		if match {
+			// Replace with value and continue after the match
+			result = append(result, []rune(value)...)
+			i = matchEnd
+		} else {
+			// No match, add current character and advance
+			result = append(result, contentRunes[i])
+			i++
+		}
+	}
+
+	return string(result)
+}
+
+// Safe placeholder matching that handles XML tags properly
+func (dp *DocxProcessor) checkXMLSafeMatch(content []rune, startPos int, placeholderRunes []rune) (bool, int) {
+	if startPos >= len(content) {
+		return false, startPos
+	}
+
+	placeholderIdx := 0
+	pos := startPos
+	inTag := false
+
+	// Look ahead to see if we can match the full placeholder
+	for pos < len(content) && placeholderIdx < len(placeholderRunes) {
+		char := content[pos]
+
+		// Track XML tag state
+		if char == '<' {
+			inTag = true
+		} else if char == '>' {
+			inTag = false
+		} else if !inTag {
+			// We're outside XML tags, check character match
+			if char == placeholderRunes[placeholderIdx] {
+				placeholderIdx++
+			} else {
+				// Mismatch - this is not our placeholder
+				return false, startPos
+			}
+		}
+		// If we're inside XML tags, skip the character
+
+		pos++
+
+		// Prevent infinite loops - if we've advanced too far without completing the match
+		if pos - startPos > len(placeholderRunes) * 10 {
+			return false, startPos
+		}
+	}
+
+	// Check if we matched the complete placeholder
+	return placeholderIdx == len(placeholderRunes), pos
 }
 
 func (dp *DocxProcessor) checkPlaceholderMatch(content string, startPos int, placeholder string) (bool, int) {
@@ -242,10 +321,13 @@ func (dp *DocxProcessor) Cleanup() {
 }
 
 func (dp *DocxProcessor) ExtractPlaceholders() ([]string, error) {
+	fmt.Printf("[DEBUG] Starting placeholder extraction\n")
 	positions, err := dp.ExtractPlaceholdersWithPositions()
 	if err != nil {
+		fmt.Printf("[DEBUG] Error extracting placeholder positions: %v\n", err)
 		return nil, err
 	}
+	fmt.Printf("[DEBUG] Found %d placeholder positions\n", len(positions))
 
 	var placeholders []string
 	seen := make(map[string]bool)
@@ -257,6 +339,7 @@ func (dp *DocxProcessor) ExtractPlaceholders() ([]string, error) {
 		}
 	}
 
+	fmt.Printf("[DEBUG] Extracted %d unique placeholders\n", len(placeholders))
 	return placeholders, nil
 }
 
@@ -276,17 +359,23 @@ func (dp *DocxProcessor) DetectOrientation() (bool, error) {
 
 func (dp *DocxProcessor) ExtractPlaceholdersWithPositions() ([]PlaceholderPosition, error) {
 	documentPath := filepath.Join(dp.tempDir, "word", "document.xml")
+	fmt.Printf("[DEBUG] Reading document.xml from: %s\n", documentPath)
 
 	content, err := os.ReadFile(documentPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read document.xml: %w", err)
 	}
+	fmt.Printf("[DEBUG] Document.xml read successfully, size: %d bytes\n", len(content))
 
 	contentStr := string(content)
+	fmt.Printf("[DEBUG] Starting XML tag removal...\n")
 	cleanText := dp.removeXMLTags(contentStr)
+	fmt.Printf("[DEBUG] XML tags removed, clean text size: %d characters\n", len(cleanText))
 
 	// Parse document layout information
+	fmt.Printf("[DEBUG] Parsing document layout...\n")
 	layout := dp.parseDocumentLayout(contentStr)
+	fmt.Printf("[DEBUG] Document layout parsed successfully\n")
 
 	var positions []PlaceholderPosition
 	cleanStart := 0

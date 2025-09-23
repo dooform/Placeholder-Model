@@ -49,11 +49,13 @@ func main() {
 	// Initialize services
 	templateService := services.NewTemplateService(gcsClient)
 
-	// Initialize PDF service
-	pdfService, err := services.NewPDFService(cfg.Gotenberg.URL)
+	// Initialize PDF service with configurable timeout
+	pdfService, err := services.NewPDFService(cfg.Gotenberg.URL, cfg.Gotenberg.Timeout)
 	if err != nil {
 		log.Printf("Warning: Failed to initialize PDF service: %v", err)
 		pdfService = nil // Continue without PDF service
+	} else {
+		log.Printf("PDF service initialized with URL: %s, timeout: %s", cfg.Gotenberg.URL, cfg.Gotenberg.Timeout)
 	}
 
 	documentService := services.NewDocumentService(gcsClient, templateService, pdfService)
@@ -144,12 +146,12 @@ func main() {
 		v1.GET("/history", logsHandler.GetHistory)
 	}
 
-	// Create HTTP server
+	// Create HTTP server with increased timeouts for document processing
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Server.Port),
 		Handler:      r,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		ReadTimeout:  60 * time.Second,  // Increased from 30s
+		WriteTimeout: 150 * time.Second, // Increased from 30s to handle PDF conversion
 		IdleTimeout:  60 * time.Second,
 	}
 

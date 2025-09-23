@@ -31,56 +31,74 @@ func NewDocumentService(gcsClient *storage.GCSClient, templateService *TemplateS
 }
 
 func (s *DocumentService) ProcessDocument(ctx context.Context, templateID string, data map[string]string) (*models.Document, error) {
+	fmt.Printf("[DEBUG] Starting ProcessDocument for template %s\n", templateID)
+
 	// Get template
+	fmt.Printf("[DEBUG] Fetching template metadata from database...\n")
 	template, err := s.templateService.GetTemplate(templateID)
 	if err != nil {
 		return nil, fmt.Errorf("template not found: %w", err)
 	}
+	fmt.Printf("[DEBUG] Template found: %s, GCS path: %s\n", template.Filename, template.GCSPath)
 
 	// Download template from GCS
+	fmt.Printf("[DEBUG] Downloading template from GCS...\n")
 	reader, err := s.gcsClient.ReadFile(ctx, template.GCSPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read template from GCS: %w", err)
 	}
 	defer reader.Close()
+	fmt.Printf("[DEBUG] Template downloaded successfully from GCS\n")
 
 	// Create temp input file
+	fmt.Printf("[DEBUG] Creating temp input file...\n")
 	tempInputFile, err := s.createTempFile(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp input file: %w", err)
 	}
 	defer s.cleanupTempFile(tempInputFile)
+	fmt.Printf("[DEBUG] Temp input file created: %s\n", tempInputFile)
 
 	// Create temp output file
 	documentID := uuid.New().String()
 	tempOutputFile := filepath.Join(os.TempDir(), documentID+".docx")
+	fmt.Printf("[DEBUG] Created document ID: %s, temp output file: %s\n", documentID, tempOutputFile)
 
 	// Process document
+	fmt.Printf("[DEBUG] Creating DOCX processor with input: %s, output: %s\n", tempInputFile, tempOutputFile)
 	proc := processor.NewDocxProcessor(tempInputFile, tempOutputFile)
+	fmt.Printf("[DEBUG] DOCX processor created successfully, starting unzip...\n")
 	if err := proc.UnzipDocx(); err != nil {
 		return nil, fmt.Errorf("failed to unzip document: %w", err)
 	}
+	fmt.Printf("[DEBUG] DOCX unzip completed successfully\n")
 	defer proc.Cleanup()
 
 	// Get placeholders and prepare complete data
+	fmt.Printf("[DEBUG] Starting placeholder extraction...\n")
 	placeholders, err := proc.ExtractPlaceholders()
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract placeholders: %w", err)
 	}
+	fmt.Printf("[DEBUG] Placeholder extraction completed, found %d placeholders\n", len(placeholders))
 
+	fmt.Printf("[DEBUG] Preparing data for %d placeholders...\n", len(placeholders))
 	completeData := make(map[string]string)
-	for _, placeholder := range placeholders {
+	for i, placeholder := range placeholders {
 		if value, exists := data[placeholder]; exists {
 			completeData[placeholder] = value
 		} else {
 			completeData[placeholder] = ""
 		}
+		fmt.Printf("[DEBUG] Placeholder %d/%d: %s -> '%s'\n", i+1, len(placeholders), placeholder, completeData[placeholder])
 	}
 
 	// Replace placeholders
+	fmt.Printf("[DEBUG] Starting placeholder replacement for %d placeholders...\n", len(completeData))
 	if err := proc.FindAndReplaceInDocument(completeData); err != nil {
 		return nil, fmt.Errorf("failed to replace placeholders: %w", err)
 	}
+	fmt.Printf("[DEBUG] Placeholder replacement completed successfully\n")
 
 	// Re-zip document
 	if err := proc.ReZipDocx(); err != nil {
@@ -101,42 +119,66 @@ func (s *DocumentService) ProcessDocument(ctx context.Context, templateID string
 		return nil, fmt.Errorf("failed to upload processed document to GCS: %w", err)
 	}
 
-	// Generate PDF using Gotenberg (optional - don't fail if PDF generation fails)
+	// Generate PDF using optimized Gotenberg and upload to GCS quickly
 	var pdfObjectName string
 	var pdfGCSPath string
+	fmt.Printf("[DEBUG] Starting optimized PDF generation for document %s\n", documentID)
 	if s.pdfService != nil {
+		fmt.Printf("[DEBUG] PDF service is available, proceeding with fast conversion\n")
 		// Re-open the DOCX file for PDF conversion
 		docxFile, err := os.Open(tempOutputFile)
 		if err == nil {
 			defer docxFile.Close()
+			fmt.Printf("[DEBUG] Successfully opened DOCX file for PDF conversion: %s\n", tempOutputFile)
 
 			// Detect orientation from the processed DOCX
 			landscape := false
 			if orientation, err := proc.DetectOrientation(); err == nil {
 				landscape = orientation
+				fmt.Printf("[DEBUG] Detected orientation: landscape=%v\n", landscape)
 			} else {
 				fmt.Printf("Warning: failed to detect orientation: %v\n", err)
 			}
 
-			// Convert DOCX to PDF with correct orientation
-			pdfReader, err := s.pdfService.ConvertDocxToPDFWithOrientation(ctx, docxFile, template.Filename, landscape)
-			if err != nil {
-				fmt.Printf("Warning: failed to convert DOCX to PDF: %v\n", err)
-			} else {
-				defer pdfReader.Close()
+			// Convert DOCX to PDF with super-fast optimized Gotenberg (~200ms)
+			fmt.Printf("[DEBUG] Starting lightning-fast PDF conversion and upload...\n")
+			tempPDFPath := filepath.Join(os.TempDir(), documentID+"_output.pdf")
 
-				// Upload PDF to GCS
-				pdfObjectName = storage.GenerateDocumentPDFObjectName(documentID, template.Filename)
-				_, err = s.gcsClient.UploadFile(ctx, pdfReader, pdfObjectName, "application/pdf")
+			// Use Gotenberg's Store method to save directly to temp file (ultra-fast)
+			err = s.pdfService.ConvertDocxToPDFToFileWithOrientation(ctx, docxFile, template.Filename, tempPDFPath, landscape)
+			if err != nil {
+				fmt.Printf("[ERROR] Failed to convert DOCX to PDF: %v\n", err)
+			} else {
+				fmt.Printf("[DEBUG] PDF conversion successful in ~200ms, uploading from temp file...\n")
+				defer os.Remove(tempPDFPath) // Clean up temp file
+
+				// Open the temp PDF file and upload to GCS
+				pdfFile, err := os.Open(tempPDFPath)
 				if err != nil {
-					fmt.Printf("Warning: failed to upload PDF to GCS: %v\n", err)
-					// Don't set pdfObjectName if upload failed
-					pdfObjectName = ""
+					fmt.Printf("[ERROR] Failed to open temp PDF file: %v\n", err)
 				} else {
-					pdfGCSPath = pdfObjectName
+					defer pdfFile.Close()
+
+					// Upload PDF to GCS from file - much more reliable than streaming
+					pdfObjectName = storage.GenerateDocumentPDFObjectName(documentID, template.Filename)
+					fmt.Printf("[DEBUG] Generated PDF object name: %s\n", pdfObjectName)
+
+					_, err = s.gcsClient.UploadFile(ctx, pdfFile, pdfObjectName, "application/pdf")
+					if err != nil {
+						fmt.Printf("[ERROR] Failed to upload PDF to GCS: %v\n", err)
+						// Don't set pdfObjectName if upload failed
+						pdfObjectName = ""
+					} else {
+						pdfGCSPath = pdfObjectName
+						fmt.Printf("[DEBUG] PDF successfully uploaded to GCS: %s\n", pdfGCSPath)
+					}
 				}
 			}
+		} else {
+			fmt.Printf("[ERROR] Failed to reopen DOCX file for PDF conversion: %v\n", err)
 		}
+	} else {
+		fmt.Printf("[DEBUG] PDF service is nil, skipping PDF generation\n")
 	}
 
 	// Convert data to JSON

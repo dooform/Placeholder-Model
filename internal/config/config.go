@@ -37,7 +37,8 @@ type GCSConfig struct {
 }
 
 type GotenbergConfig struct {
-	URL string `json:"url"`
+	URL     string `json:"url"`
+	Timeout string `json:"timeout"`
 }
 
 func (d *DatabaseConfig) DSN() string {
@@ -76,7 +77,8 @@ func Load() (*Config, error) {
 			CredentialsPath: getEnv("GCS_CREDENTIALS_PATH", ""),
 		},
 		Gotenberg: GotenbergConfig{
-			URL: getEnv("GOTENBERG_URL", "http://localhost:3000"),
+			URL:     getEnv("GOTENBERG_URL", "http://localhost:3000"),
+			Timeout: getEnv("GOTENBERG_TIMEOUT", "30s"), // Faster timeout for optimized Gotenberg
 		},
 	}
 

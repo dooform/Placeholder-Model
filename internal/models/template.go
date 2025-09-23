@@ -35,6 +35,8 @@ type Document struct {
 	Filename    string         `gorm:"not null" json:"filename"`
 	GCSPathDocx string         `json:"gcs_path_docx"`
 	GCSPathPdf  string         `json:"gcs_path_pdf,omitempty"`
+	TempPDFPath string         `gorm:"-" json:"-"` // Temp PDF file path (not stored in DB)
+	PDFReady    bool           `gorm:"-" json:"pdf_ready"` // PDF availability flag (not stored in DB)
 	FileSize    int64          `json:"file_size"`
 	MimeType    string         `json:"mime_type"`
 	Data        string         `gorm:"type:json" json:"data"` // JSON object of placeholder data used
