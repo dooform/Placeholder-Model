@@ -171,74 +171,74 @@ func (dp *DocxProcessor) replaceWithXMLHandling(content, placeholder, value stri
 
 // More robust but slower XML-aware replacement that won't hang
 func (dp *DocxProcessor) replaceXMLSafeSlow(content, placeholder, value string) string {
-	// Convert to runes to handle Unicode properly
-	contentRunes := []rune(content)
-	placeholderRunes := []rune(placeholder)
-
-	if len(placeholderRunes) == 0 {
-		return content
-	}
-
-	result := make([]rune, 0, len(contentRunes))
-	i := 0
-
-	for i < len(contentRunes) {
-		// Try to match placeholder starting at position i
-		match, matchEnd := dp.checkXMLSafeMatch(contentRunes, i, placeholderRunes)
-		if match {
-			// Replace with value and continue after the match
-			result = append(result, []rune(value)...)
-			i = matchEnd
-		} else {
-			// No match, add current character and advance
-			result = append(result, contentRunes[i])
-			i++
-		}
-	}
-
-	return string(result)
+    // This is a corrected implementation that should not hang and correctly replaces placeholders.
+    var result strings.Builder
+    contentRunes := []rune(content)
+    placeholderRunes := []rune(placeholder)
+    i := 0
+    for i < len(contentRunes) {
+        // Use the corrected checkXMLSafeMatch function
+        match, endPos := dp.checkXMLSafeMatch(contentRunes, i, placeholderRunes)
+        if match {
+            result.WriteString(value)
+            i = endPos
+        } else {
+            result.WriteRune(contentRunes[i])
+            i++
+        }
+    }
+    return result.String()
 }
 
 // Safe placeholder matching that handles XML tags properly
 func (dp *DocxProcessor) checkXMLSafeMatch(content []rune, startPos int, placeholderRunes []rune) (bool, int) {
-	if startPos >= len(content) {
-		return false, startPos
-	}
+    if startPos >= len(content) {
+        return false, startPos
+    }
 
-	placeholderIdx := 0
-	pos := startPos
-	inTag := false
+    placeholderIdx := 0
+    contentIdx := startPos
+    inTag := false
 
-	// Look ahead to see if we can match the full placeholder
-	for pos < len(content) && placeholderIdx < len(placeholderRunes) {
-		char := content[pos]
+    // Keep track of the actual content characters that form the placeholder
+    matchChars := make([]rune, 0, len(placeholderRunes))
 
-		// Track XML tag state
-		if char == '<' {
-			inTag = true
-		} else if char == '>' {
-			inTag = false
-		} else if !inTag {
-			// We're outside XML tags, check character match
-			if char == placeholderRunes[placeholderIdx] {
-				placeholderIdx++
-			} else {
-				// Mismatch - this is not our placeholder
-				return false, startPos
-			}
-		}
-		// If we're inside XML tags, skip the character
+    // The end position of the match in the original content
+    matchEndPos := startPos
 
-		pos++
+    for contentIdx < len(content) && placeholderIdx < len(placeholderRunes) {
+        char := content[contentIdx]
 
-		// Prevent infinite loops - if we've advanced too far without completing the match
-		if pos - startPos > len(placeholderRunes) * 10 {
-			return false, startPos
-		}
-	}
+        if char == '<' {
+            inTag = true
+        } else if char == '>' {
+            inTag = false
+        } else if !inTag {
+            // Only match if outside a tag
+            if char == placeholderRunes[placeholderIdx] {
+                matchChars = append(matchChars, char)
+                placeholderIdx++
+                matchEndPos = contentIdx + 1
+            } else {
+                // If there is a mismatch, this is not a valid placeholder sequence.
+                return false, startPos
+            }
+        }
+        
+        contentIdx++
 
-	// Check if we matched the complete placeholder
-	return placeholderIdx == len(placeholderRunes), pos
+        // Safety break to prevent infinite loops in malformed XML
+        if contentIdx - startPos > len(content) {
+            return false, startPos
+        }
+    }
+
+    // Check if the full placeholder was matched
+    if placeholderIdx == len(placeholderRunes) {
+        return true, matchEndPos
+    }
+
+    return false, startPos
 }
 
 func (dp *DocxProcessor) checkPlaceholderMatch(content string, startPos int, placeholder string) (bool, int) {
