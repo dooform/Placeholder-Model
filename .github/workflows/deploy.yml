@@ -11,7 +11,7 @@ permissions:
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GAR_LOCATION: asia-southeast1
-  SERVICE: df-plch
+  SERVICE: dooform-placeholder-model
   REGION: asia-southeast1
 
 jobs:
