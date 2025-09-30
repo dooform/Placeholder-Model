@@ -3,22 +3,23 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	Server     ServerConfig     `json:"server"`
-	Database   DatabaseConfig   `json:"database"`
-	GCS        GCSConfig        `json:"gcs"`
-	Gotenberg  GotenbergConfig  `json:"gotenberg"`
+	Server    ServerConfig    `json:"server"`
+	Database  DatabaseConfig  `json:"database"`
+	GCS       GCSConfig       `json:"gcs"`
+	Gotenberg GotenbergConfig `json:"gotenberg"`
 }
 
 type ServerConfig struct {
-	Port        string   `json:"port"`
-	Environment string   `json:"environment"`
-	BaseURL     string   `json:"base_url"`
+	Port         string   `json:"port"`
+	Environment  string   `json:"environment"`
+	BaseURL      string   `json:"base_url"`
 	AllowOrigins []string `json:"allow_origins"`
 }
 
@@ -52,14 +53,48 @@ func (d *DatabaseConfig) DSN() string {
 		d.User, d.Password, d.Host, d.Port, d.DBName)
 }
 
+// findProjectRoot finds the project root by looking for go.mod file
+func findProjectRoot() string {
+	dir, _ := os.Getwd()
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+
 func Load() (*Config, error) {
-	if err := godotenv.Load(); err != nil {
-		fmt.Printf("Failed to load .env file: %v, using system environment variables\n", err)
+	// Try to find and load .env from project root
+	envPaths := []string{}
+
+	if projectRoot := findProjectRoot(); projectRoot != "" {
+		envPaths = append(envPaths, filepath.Join(projectRoot, ".env"))
+	}
+
+	// Fallback paths
+	envPaths = append(envPaths, "../../.env", ".env")
+
+	loaded := false
+	for _, envPath := range envPaths {
+		if err := godotenv.Load(envPath); err == nil {
+			loaded = true
+			break
+		}
+	}
+
+	if !loaded {
+		fmt.Printf("Failed to load .env file from any location, using system environment variables\n")
 	}
 
 	config := &Config{
 		Server: ServerConfig{
-			Port:         getEnv("SERVER_PORT", "8080"),
+			Port:         getEnv("SERVER_PORT", "8081"),
 			Environment:  getEnv("ENVIRONMENT", "development"),
 			BaseURL:      getEnv("BASE_URL", ""),
 			AllowOrigins: parseAllowOrigins(),
