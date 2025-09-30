@@ -148,7 +148,7 @@ func main() {
 
 	// Create HTTP server with increased timeouts for document processing
 	srv := &http.Server{
-		Addr:         fmt.Sprintf("127.0.0.1:%s", cfg.Server.Port), // Only listen on localhost
+		Addr:         fmt.Sprintf("0.0.0.0:%s", cfg.Server.Port), // Listen on all interfaces for Cloud Run
 		Handler:      r,
 		ReadTimeout:  60 * time.Second,  // Increased from 30s
 		WriteTimeout: 150 * time.Second, // Increased from 30s to handle PDF conversion
