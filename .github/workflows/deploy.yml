@@ -42,7 +42,7 @@ jobs:
     - name: Deploy to Cloud Run
       run: |
         cat > env-vars.yaml << EOF
-        SERVER_PORT: "8080"
+        SERVER_PORT: "8081"
         ENVIRONMENT: "production"
         BASE_URL: "${{ secrets.BASE_URL }}"
         ALLOW_ORIGINS: "${{ secrets.ALLOW_ORIGINS }}"
@@ -61,7 +61,7 @@ jobs:
           --platform managed \
           --region $REGION \
           --allow-unauthenticated \
-          --port=8080 \
+          --port=8081 \
           --memory=512Mi \
           --cpu=1 \
           --timeout=300 \
