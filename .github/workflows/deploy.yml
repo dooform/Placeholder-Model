@@ -40,6 +40,13 @@ jobs:
           docker build --tag "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}" .
           docker push "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}"
 
+      - name: Check IAM permissions
+        run: |
+          echo "Checking current authentication..."
+          gcloud auth list
+          echo "Checking project access..."
+          gcloud projects describe ${{ env.PROJECT_ID }}
+
       - name: Deploy to Cloud Run
         env:
           CLOUD_SQL_CONNECTION_NAME: ${{ secrets.CLOUD_SQL_CONNECTION_NAME }}
@@ -50,6 +57,7 @@ jobs:
           GOTENBERG_URL: ${{ secrets.GOTENBERG_URL }}
           BASE_URL: ${{ secrets.BASE_URL }}
           ALLOW_ORIGINS: ${{ secrets.ALLOW_ORIGINS }}
+        timeout-minutes: 10
         run: |
           cat > env-vars.yaml << EOF
           SERVER_PORT: "8081"
@@ -67,7 +75,8 @@ jobs:
           ALLOW_ORIGINS: "${ALLOW_ORIGINS}"
           EOF
 
-          gcloud run deploy ${{ env.SERVICE }} \
+          echo "Starting Cloud Run deployment..."
+          timeout 600 gcloud run deploy ${{ env.SERVICE }} \
             --image ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }} \
             --platform managed \
             --region ${{ env.REGION }} \
@@ -81,4 +90,5 @@ jobs:
             --add-cloudsql-instances=${CLOUD_SQL_CONNECTION_NAME} \
             --execution-environment=gen2 \
             --env-vars-file=env-vars.yaml \
-            --labels=managed-by=github-actions,commit-sha=${{ github.sha }}
+            --labels=managed-by=github-actions,commit-sha=${{ github.sha }} \
+            --verbosity=debug
