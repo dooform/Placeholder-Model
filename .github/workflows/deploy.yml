@@ -41,31 +41,44 @@ jobs:
           docker push "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}"
 
       - name: Deploy to Cloud Run
-        id: deploy
+        env:
+          CLOUD_SQL_CONNECTION_NAME: ${{ secrets.CLOUD_SQL_CONNECTION_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          GCS_BUCKET_NAME: ${{ secrets.GCS_BUCKET_NAME }}
+          GOTENBERG_URL: ${{ secrets.GOTENBERG_URL }}
+          BASE_URL: ${{ secrets.BASE_URL }}
+          ALLOW_ORIGINS: ${{ secrets.ALLOW_ORIGINS }}
         run: |
+          cat > env-vars.yaml << EOF
+          SERVER_PORT: "8081"
+          ENVIRONMENT: "production"
+          DB_HOST: "/cloudsql/${CLOUD_SQL_CONNECTION_NAME}"
+          DB_PORT: "3306"
+          DB_USER: "${DB_USER}"
+          DB_PASSWORD: "${DB_PASSWORD}"
+          DB_NAME: "${DB_NAME}"
+          GCS_BUCKET_NAME: "${GCS_BUCKET_NAME}"
+          GOOGLE_CLOUD_PROJECT: "${PROJECT_ID}"
+          GOTENBERG_URL: "${GOTENBERG_URL}"
+          GOTENBERG_TIMEOUT: "30s"
+          BASE_URL: "${BASE_URL}"
+          ALLOW_ORIGINS: "${ALLOW_ORIGINS}"
+          EOF
+
           gcloud run deploy ${{ env.SERVICE }} \
-            --image "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}" \
-            --region ${{ env.REGION }} \
+            --image ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }} \
             --platform managed \
-            --port 8081 \
+            --region ${{ env.REGION }} \
             --allow-unauthenticated \
-            --memory 512Mi \
-            --cpu 1 \
-            --timeout 300 \
-            --concurrency 80 \
-            --service-account ${{ secrets.CLOUD_RUN_SERVICE_ACCOUNT }} \
-            --add-cloudsql-instances ${{ secrets.CLOUD_SQL_CONNECTION_NAME }} \
-            --execution-environment gen2 \
-            --update-env-vars SERVER_PORT=8081 \
-            --update-env-vars ENVIRONMENT=production \
-            --update-env-vars DB_HOST="/cloudsql/${{ secrets.CLOUD_SQL_CONNECTION_NAME }}" \
-            --update-env-vars DB_USER="${{ secrets.DB_USER }}" \
-            --update-env-vars DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
-            --update-env-vars DB_NAME="${{ secrets.DB_NAME }}" \
-            --update-env-vars GCS_BUCKET_NAME="${{ secrets.GCS_BUCKET_NAME }}" \
-            --update-env-vars GOOGLE_CLOUD_PROJECT="${{ secrets.GCP_PROJECT_ID }}" \
-            --update-env-vars GOTENBERG_URL="${{ secrets.GOTENBERG_URL }}" \
-            --update-env-vars GOTENBERG_TIMEOUT=30s \
-            --update-env-vars BASE_URL="${{ secrets.BASE_URL }}" \
-            --update-env-vars ALLOW_ORIGINS="${{ secrets.ALLOW_ORIGINS }}" \
-            --labels managed-by=github-actions,commit-sha=${{ github.sha }}
+            --port=8081 \
+            --memory=512Mi \
+            --cpu=1 \
+            --timeout=300 \
+            --concurrency=80 \
+            --service-account=${{ secrets.CLOUD_RUN_SERVICE_ACCOUNT }} \
+            --add-cloudsql-instances=${CLOUD_SQL_CONNECTION_NAME} \
+            --execution-environment=gen2 \
+            --env-vars-file=env-vars.yaml \
+            --labels=managed-by=github-actions,commit-sha=${{ github.sha }}
